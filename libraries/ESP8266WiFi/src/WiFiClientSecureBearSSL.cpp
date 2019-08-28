@@ -207,17 +207,11 @@ bool WiFiClientSecure::stop(unsigned int maxWaitMs) {
 
 // This is where the write to the underlying WiFiClient actually happens
 // TODO - should this return bytes pushed to air, into the WiFiClient, or just a bool if something happened?
-bool WiFiClientSecure::flush(unsigned int maxWaitMs) {
+bool WiFiClientSecure::flush(unsigned int maxWaitMs) { 
   unsigned long startMillis = millis();
-  // first attempt a quick flush of the WiFiClient to help make space
-  bool initialFlushResult = WiFiClient::flush(50);
   
   // push any record data into the WiFiClient
   while (br_ssl_engine_current_state(_eng) & BR_SSL_SENDREC) {   
-    if (millis() - startMillis > maxWaitMs) {
-      DEBUG_BSSL("flush loop: timeout\n");
-      break;
-    }
     optimistic_yield(100);
     
     unsigned char *buf;
@@ -234,6 +228,11 @@ bool WiFiClientSecure::flush(unsigned int maxWaitMs) {
     
     if (wlen > 0) {
       br_ssl_engine_sendrec_ack(_eng, wlen);
+    }
+    
+    if (millis() - startMillis > maxWaitMs) {
+      DEBUG_BSSL("flush loop: timeout\n");
+      break;
     }
   }
   return WiFiClient::flush(maxWaitMs);
