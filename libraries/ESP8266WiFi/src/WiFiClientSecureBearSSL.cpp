@@ -205,8 +205,37 @@ bool WiFiClientSecure::stop(unsigned int maxWaitMs) {
   return ret;
 }
 
+// This is where the write to the underlying WiFiClient actually happens
+// TODO - should this return bytes pushed to air, into the WiFiClient, or just a bool if something happened?
 bool WiFiClientSecure::flush(unsigned int maxWaitMs) {
-  (void) _run_until(BR_SSL_SENDAPP);
+  unsigned long startMillis = millis();
+  // first attempt a quick flush of the WiFiClient to help make space
+  bool initialFlushResult = WiFiClient::flush(50);
+  
+  // push any record data into the WiFiClient
+  while (br_ssl_engine_current_state(_eng) & BR_SSL_SENDREC) {   
+    if (millis() - startMillis > maxWaitMs) {
+      DEBUG_BSSL("flush loop: timeout\n");
+      break;
+    }
+    optimistic_yield(100);
+    
+    unsigned char *buf;
+    size_t len;
+    int wlen;
+
+    buf = br_ssl_engine_sendrec_buf(_eng, &len);
+    size_t availForWrite = WiFiClient::availableForWrite();
+    
+    if (len > availForWrite) len = availForWrite; // we want a non-blocking write in this loop
+    wlen = WiFiClient::write(buf, len); // returns a size_t, it can never be < 0
+    if (!wlen) DEBUG_BSSL("flush: can't write to WiFiClient\n");
+    if (!len) DEBUG_BSSL("flush: WiFiClient tx buffer is full\n");
+    
+    if (wlen > 0) {
+      br_ssl_engine_sendrec_ack(_eng, wlen);
+    }
+  }
   return WiFiClient::flush(maxWaitMs);
 }
 
@@ -220,7 +249,7 @@ int WiFiClientSecure::connect(IPAddress ip, uint16_t port) {
 int WiFiClientSecure::connect(const char* name, uint16_t port) {
   IPAddress remote_addr;
   if (!WiFi.hostByName(name, remote_addr)) {
-    DEBUG_BSSL("connect: Name loopup failure\n");
+    DEBUG_BSSL("connect: Name lookup failure\n");
     return 0;
   }
   if (!WiFiClient::connect(remote_addr, port)) {
@@ -275,11 +304,6 @@ size_t WiFiClientSecure::_write(const uint8_t *buf, size_t size, bool pmem) {
       optimistic_yield(1000);
     }
 
-    // Get BearSSL to a state where we can send
-    if (_run_until(BR_SSL_SENDAPP) < 0) {
-      break;
-    }
-
     if (br_ssl_engine_current_state(_eng) & BR_SSL_SENDAPP) {
       size_t sendapp_len;
       unsigned char *sendapp_buf = br_ssl_engine_sendapp_buf(_eng, &sendapp_len);
@@ -291,11 +315,13 @@ size_t WiFiClientSecure::_write(const uint8_t *buf, size_t size, bool pmem) {
       }
       br_ssl_engine_sendapp_ack(_eng, to_send);
       br_ssl_engine_flush(_eng, 0);
-      flush();
+      flush(); // TODO remove the overload from the header
       buf += to_send;
       sent_bytes += to_send;
       size -= to_send;
     } else {
+      // the engine can not accept plaintext input, usually because failed writes have filled sendapp buffer
+      DEBUG_BSSL("_write: sendapp not available\n");
       break;
     }
   } while (size);
@@ -378,19 +404,43 @@ int WiFiClientSecure::read() {
 
 int WiFiClientSecure::available() {
   if (_recvapp_buf) {
-    return _recvapp_len;  // Anything from last call?
+    return _recvapp_len;  // Anything from last call? TODO remove this, do a fresh check each time
   }
   _recvapp_buf = nullptr;
   _recvapp_len = 0;
-  if (!ctx_present() || _run_until(BR_SSL_RECVAPP, false) < 0) {
+  
+  if (!ctx_present()) {
     return 0;
   }
-  int st = br_ssl_engine_current_state(_eng);
-  if (st == BR_SSL_CLOSED) {
+  int state = br_ssl_engine_current_state(_eng);
+  if (state == BR_SSL_CLOSED) {
     return 0;  // Nothing leftover, SSL is closed
   }
-  if (st & BR_SSL_RECVAPP) {
-    _recvapp_buf = br_ssl_engine_recvapp_buf(_eng, &_recvapp_len);
+  
+  /* 
+     If there is input data in the WiFiClient available to be processed, and brssl can accept it, then do it
+     This may or may not generate app data, depending on whether a full record can be assembled
+  */
+  int recordDataAvail = WiFiClient::available();
+  if (recordDataAvail && (state & BR_SSL_RECVREC)) {
+    unsigned char *buf;
+    size_t len;
+    int rlen;
+    
+    buf = br_ssl_engine_recvrec_buf(_eng, &len);
+    if (len > recordDataAvail) len = recordDataAvail; // don't try to read more than is available. Actually this clientContext already does this check, but I feel better having it here
+    rlen = WiFiClient::read(buf, len);
+    if (rlen <= 0) {
+      DEBUG_BSSL("available: unexpected WiFiClient read fail\n"); // should not happen...
+    }
+    if (rlen > 0) {
+      br_ssl_engine_recvrec_ack(_eng, rlen);
+    }
+  }
+  
+  // check if we now have app data
+  if (br_ssl_engine_current_state(_eng) & BR_SSL_RECVAPP) {
+    _recvapp_buf = br_ssl_engine_recvapp_buf(_eng, &_recvapp_len); // This stored buf pointer is used for the peek methods
     return _recvapp_len;
   }
 
@@ -542,7 +592,29 @@ int WiFiClientSecure::_run_until(unsigned target, bool blocking) {
 
 bool WiFiClientSecure::_wait_for_handshake() {
   _handshake_done = false;
+  unsigned long startMillis = millis();
+  
   while (!_handshake_done && _clientConnected()) {
+    if (millis() - startMillis > 30000) {
+      DEBUG_BSSL("handshake timeout");
+      break;
+    }
+    // shuffle incoming data into brssl recvapp buffer and process it
+    (void) available();
+    
+    // push any sendrec data to the air
+    flush();
+    
+    // success is indicated when sendapp state is acheived
+    if (br_ssl_engine_current_state(_eng) & BR_SSL_SENDAPP) {
+      _handshake_done = true;
+    }
+    optimistic_yield(1000);
+    
+  }
+  return _handshake_done;  
+  
+/*   while (!_handshake_done && _clientConnected()) {
     int ret = _run_until(BR_SSL_SENDAPP);
     if (ret < 0) {
       DEBUG_BSSL("_wait_for_handshake: failed\n");
@@ -553,7 +625,7 @@ bool WiFiClientSecure::_wait_for_handshake() {
     }
     optimistic_yield(1000);
   }
-  return _handshake_done;
+  return _handshake_done; */
 }
 
 static uint8_t htoi (unsigned char c)
