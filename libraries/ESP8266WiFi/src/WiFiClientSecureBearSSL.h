@@ -247,6 +247,7 @@ class WiFiClientSecure : public WiFiClient {
 
     bool _clientConnected(); // Is the underlying socket alive?
     void _freeSSL();
+    size_t _readRecordData();
     size_t _writeRecordData(bool blocking);
     size_t _write(const uint8_t *buf, size_t size, bool pmem);
     bool _wait_for_handshake(); // Sets and return the _handshake_done after connecting

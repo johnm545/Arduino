@@ -269,7 +269,34 @@ uint8_t WiFiClientSecure::connected() {
   return false;
 }
 
-// This is where the write to the underlying WiFiClient actually happens
+/* 
+   If there is input record data in the WiFiClient available to be processed, and brssl can accept it, then do it
+   This may or may not generate app data, depending on whether a full record can be assembled
+*/
+size_t WiFiClientSecure::_readRecordData() { 
+  if (WiFiClient::available() && (br_ssl_engine_current_state(_eng) & BR_SSL_RECVREC)) {
+    unsigned char *buf;
+    size_t len;
+    int rlen;
+    
+    buf = br_ssl_engine_recvrec_buf(_eng, &len);
+    rlen = WiFiClient::read(buf, len);
+    if (rlen <= 0) {
+      DEBUG_BSSL("available: unexpected WiFiClient read fail\n"); // should not happen...
+    }
+    if (rlen > 0) {
+      // prompt bearssl to chew on the record data
+      br_ssl_engine_recvrec_ack(_eng, rlen);
+      return (size_t) rlen;
+    }
+  }
+  return 0;
+}
+
+/* 
+   If there is record data from the bearssl engine to be sent, and the WiFiClient can accept it, then do it
+   This returns the number of bytes written to the WiFiClient tx buffer - they may not have yet gone to air
+*/
 size_t WiFiClientSecure::_writeRecordData(bool blocking) {
   if ((br_ssl_engine_current_state(_eng) & BR_SSL_SENDREC) == false) {
     return 0;
@@ -287,7 +314,7 @@ size_t WiFiClientSecure::_writeRecordData(bool blocking) {
   } 
   wlen = WiFiClient::write(buf, len); // returns a size_t, it can never be < 0
   if (!wlen) DEBUG_BSSL("can't write to WiFiClient\n");
-  if (!len) DEBUG_BSSL("WiFiClient tx buffer is full\n");
+  if (!availForWrite) DEBUG_BSSL("WiFiClient tx buffer is full\n");
   
   if (wlen) {
     br_ssl_engine_sendrec_ack(_eng, wlen);
@@ -412,6 +439,7 @@ int WiFiClientSecure::read() {
 }
 
 int WiFiClientSecure::available() {
+  optimistic_yield(100); // yield incase called in a busy loop
   if (_recvapp_buf) {
     return _recvapp_len;  // Anything from last call? TODO remove this, do a fresh check each time
   }
@@ -427,24 +455,10 @@ int WiFiClientSecure::available() {
   }
   
   /* 
-     If there is input data in the WiFiClient available to be processed, and brssl can accept it, then do it
-     This may or may not generate app data, depending on whether a full record can be assembled
+     To know how much (if any) app data is available, we first need to read and process record data. 
+     The read is non-blocking, but the decryption may take a few ms of CPU time
   */
-  int recordDataAvail = WiFiClient::available();
-  if (recordDataAvail && (state & BR_SSL_RECVREC)) {
-    unsigned char *buf;
-    size_t len;
-    int rlen;
-    
-    buf = br_ssl_engine_recvrec_buf(_eng, &len);
-    rlen = WiFiClient::read(buf, len);
-    if (rlen <= 0) {
-      DEBUG_BSSL("available: unexpected WiFiClient read fail\n"); // should not happen...
-    }
-    if (rlen > 0) {
-      br_ssl_engine_recvrec_ack(_eng, rlen);
-    }
-  }
+  (void) _readRecordData();
   
   // check if we now have app data
   if (br_ssl_engine_current_state(_eng) & BR_SSL_RECVAPP) {
@@ -496,9 +510,9 @@ bool WiFiClientSecure::_wait_for_handshake() {
       break;
     }
     // shuffle incoming data into bearrssl recvapp buffer and process it
-    (void) available();
+    (void) _readRecordData();
     
-    // push any sendrec data to the air
+    // push any sendrec data to the air, a blocking write is ok here
     (void) _writeRecordData(true);
     
     // success is indicated when sendapp state is acheived
