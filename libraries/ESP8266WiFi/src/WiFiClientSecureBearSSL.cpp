@@ -268,27 +268,24 @@ uint8_t WiFiClientSecure::connected() {
 /* 
    If there is input record data in the WiFiClient available to be processed, and brssl can accept it, then do it
    This may or may not generate app data, depending on whether a full record can be assembled
-   Sometimes more data can be accepted after processing some record data, hence the loop with progress flag
+   Sometimes more data can be accepted after processing some record data, hence the loop
 */
 size_t WiFiClientSecure::_readRecordData() {
-  bool progress = true;
   size_t bytesRead = 0;
   
-  while (progress && WiFiClient::available() && (br_ssl_engine_current_state(_eng) & BR_SSL_RECVREC)) {
+  while (WiFiClient::available() && (br_ssl_engine_current_state(_eng) & BR_SSL_RECVREC)) {
     unsigned char *buf;
     size_t len;
-    int rlen;
     
     buf = br_ssl_engine_recvrec_buf(_eng, &len);
     //Serial.print("_readRecordData: len "); Serial.println(len);
-    rlen = WiFiClient::read(buf, len);
+    int rlen = WiFiClient::read(buf, len); // read is non-blocking, will only read what is available
     //Serial.print("_readRecordData: rlen "); Serial.println(rlen);
     if (rlen <= 0) {
       DEBUG_BSSL("unexpected WiFiClient read fail"); // should not happen...
-      progress = false;
+      break;
     }
     if (rlen > 0) {
-      progress = true;
       bytesRead += rlen;
       // prompt bearssl to chew on the record data
       br_ssl_engine_recvrec_ack(_eng, rlen);
