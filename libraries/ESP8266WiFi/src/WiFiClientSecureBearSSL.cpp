@@ -82,8 +82,6 @@ void WiFiClientSecure::_clear() {
   _ta = nullptr;
   setBufferSizes(16384, 512); // Minimum safe
   _handshake_done = false;
-  _recvapp_buf = nullptr;
-  _recvapp_len = 0;
   _oom_err = false;
   _session = nullptr;
   _cipher_list = nullptr;
@@ -250,9 +248,7 @@ void WiFiClientSecure::_freeSSL() {
   _x509_knownkey = nullptr;
   _iobuf_in = nullptr;
   _iobuf_out = nullptr;
-  // Reset non-allocated ptrs (pointing to bits potentially free'd above)
-  _recvapp_buf = nullptr;
-  _recvapp_len = 0;
+
   // This connection is toast
   _handshake_done = false;
   _timeout = 15000;
@@ -414,11 +410,14 @@ int WiFiClientSecure::read(uint8_t *buf, size_t size) {
 
   if (avail) {
     // Take data from the recvapp buffer
-    int to_copy = _recvapp_len < size ? _recvapp_len : size;
-    memcpy(buf, _recvapp_buf, to_copy);
+    size_t recvapp_len;
+    unsigned char *recvapp_buf;
+    recvapp_buf = br_ssl_engine_recvapp_buf(_eng, &recvapp_len);
+    
+    int to_copy = recvapp_len < size ? recvapp_len : size;
+    memcpy(buf, recvapp_buf, to_copy);
     br_ssl_engine_recvapp_ack(_eng, to_copy);
-    _recvapp_buf = nullptr;
-    _recvapp_len = 0;
+
     return to_copy;
   }
 
@@ -440,12 +439,7 @@ int WiFiClientSecure::read() {
 
 int WiFiClientSecure::available() {
   optimistic_yield(100); // yield incase called in a busy loop
-  if (_recvapp_buf) {
-    return _recvapp_len;  // Anything from last call? TODO remove this, do a fresh check each time
-  }
-  _recvapp_buf = nullptr;
-  _recvapp_len = 0;
-  
+
   if (!ctx_present()) {
     return 0;
   }
@@ -462,20 +456,24 @@ int WiFiClientSecure::available() {
   
   // check if we now have app data
   if (br_ssl_engine_current_state(_eng) & BR_SSL_RECVAPP) {
-    _recvapp_buf = br_ssl_engine_recvapp_buf(_eng, &_recvapp_len); // This stored buf pointer is used for the peek methods
-    return _recvapp_len;
+    size_t recvapp_len;
+    (void) br_ssl_engine_recvapp_buf(_eng, &recvapp_len);
+    return recvapp_len;
   }
 
   return 0;
 }
 
 int WiFiClientSecure::peek() {
-  if (!ctx_present() || !available()) {
-    DEBUG_BSSL("peek: Not connected, none left available\n");
+  if (!ctx_present()) {
+    DEBUG_BSSL("peek: Not connected\n");
     return -1;
   }
-  if (_recvapp_buf && _recvapp_len) {
-    return _recvapp_buf[0];
+  if (available()) { // available() returns recvapp_len, so this is safe
+    size_t recvapp_len;
+    unsigned char *recvapp_buf;
+    recvapp_buf = br_ssl_engine_recvapp_buf(_eng, &recvapp_len);
+    return recvapp_buf[0];
   }
   DEBUG_BSSL("peek: No data left\n");
   return -1;
@@ -488,13 +486,18 @@ size_t WiFiClientSecure::peekBytes(uint8_t *buffer, size_t length) {
     return 0;
   }
 
-  _startMillis = millis();
+  _startMillis = millis(); // where is _startMillis coming from?!
   while ((available() < (int) length) && ((millis() - _startMillis) < 5000)) {
     yield();
   }
+  if (available()) {
+    size_t recvapp_len;
+    unsigned char *recvapp_buf;
+    recvapp_buf = br_ssl_engine_recvapp_buf(_eng, &recvapp_len);
 
-  to_copy = _recvapp_len < length ? _recvapp_len : length;
-  memcpy(buffer, _recvapp_buf, to_copy);
+    to_copy = recvapp_len < length ? recvapp_len : length;
+    memcpy(buffer, recvapp_buf, to_copy);
+  }
   return to_copy;
 }
 

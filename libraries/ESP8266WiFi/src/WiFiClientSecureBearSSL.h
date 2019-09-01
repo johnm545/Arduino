@@ -242,9 +242,6 @@ class WiFiClientSecure : public WiFiClient {
     std::shared_ptr<uint16_t> _cipher_list;
     uint8_t _cipher_cnt;
 
-    unsigned char *_recvapp_buf;
-    size_t _recvapp_len;
-
     bool _clientConnected(); // Is the underlying socket alive?
     void _freeSSL();
     size_t _readRecordData();
