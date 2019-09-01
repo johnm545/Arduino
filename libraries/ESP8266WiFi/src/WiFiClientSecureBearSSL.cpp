@@ -268,30 +268,39 @@ uint8_t WiFiClientSecure::connected() {
 /* 
    If there is input record data in the WiFiClient available to be processed, and brssl can accept it, then do it
    This may or may not generate app data, depending on whether a full record can be assembled
+   Sometimes more data can be accepted after processing some record data, hence the loop with progress flag
 */
-size_t WiFiClientSecure::_readRecordData() { 
-  if (WiFiClient::available() && (br_ssl_engine_current_state(_eng) & BR_SSL_RECVREC)) {
+size_t WiFiClientSecure::_readRecordData() {
+  bool progress = true;
+  size_t bytesRead = 0;
+  
+  while (progress && WiFiClient::available() && (br_ssl_engine_current_state(_eng) & BR_SSL_RECVREC)) {
     unsigned char *buf;
     size_t len;
     int rlen;
     
     buf = br_ssl_engine_recvrec_buf(_eng, &len);
+    //Serial.print("_readRecordData: len "); Serial.println(len);
     rlen = WiFiClient::read(buf, len);
+    //Serial.print("_readRecordData: rlen "); Serial.println(rlen);
     if (rlen <= 0) {
-      DEBUG_BSSL("available: unexpected WiFiClient read fail\n"); // should not happen...
+      DEBUG_BSSL("unexpected WiFiClient read fail"); // should not happen...
+      progress = false;
     }
     if (rlen > 0) {
+      progress = true;
+      bytesRead += rlen;
       // prompt bearssl to chew on the record data
       br_ssl_engine_recvrec_ack(_eng, rlen);
-      return (size_t) rlen;
     }
   }
-  return 0;
+  return bytesRead;
 }
 
 /* 
    If there is record data from the bearssl engine to be sent, and the WiFiClient can accept it, then do it
    This returns the number of bytes written to the WiFiClient tx buffer - they may not have yet gone to air
+   
 */
 size_t WiFiClientSecure::_writeRecordData(bool blocking) {
   if ((br_ssl_engine_current_state(_eng) & BR_SSL_SENDREC) == false) {
