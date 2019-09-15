@@ -513,8 +513,8 @@ bool WiFiClientSecure::_wait_for_handshake() {
   _handshake_done = false;
   unsigned long startMillis = millis();
   
-  while (!_handshake_done && _clientConnected()) {
-    if (millis() - startMillis > 30000) {
+  while (!_handshake_done && _clientConnected() && (br_ssl_engine_current_state(_eng) != BR_SSL_CLOSED))) {
+    if (millis() - startMillis > _timeout) {
       DEBUG_BSSL("handshake timeout");
       break;
     }
