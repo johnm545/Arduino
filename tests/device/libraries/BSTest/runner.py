@@ -19,17 +19,12 @@ try:
 except ImportError:
     from urlparse import urlparse
 from junit_xml import TestSuite, TestCase
-try:
-    from cStringIO import StringIO
-except:
-    try:
-        from StringIO import StringIO
-    except ImportError:
-        from io import StringIO
-import mock_decorators
 
-debug = False
-#debug = True
+import mock_decorators
+from io import BytesIO
+
+#debug = False
+debug = True
 
 sys.path.append(os.path.abspath(__file__))
 
@@ -74,7 +69,11 @@ class BSTestRunner(object):
                                   EOF, TIMEOUT])
             if res == 0:
                 m = self.sp.match
-                t = {'id': m.group(1), 'name': m.group(2), 'desc': m.group(3)}
+                t = {
+                    'id': m.group(1).decode('utf-8'), 
+                    'name': m.group(2).decode('utf-8'), 
+                    'desc': m.group(3).decode('utf-8')
+                }
                 self.tests.append(t)
                 debug_print('added test', t)
             elif res == 1:
@@ -96,7 +95,7 @@ class BSTestRunner(object):
                 print('skipping test "{}"'.format(name))
                 test_case.add_skipped_info(message="Skipped test marked with [.]")
             else:
-                test_output = StringIO()
+                test_output = BytesIO()
                 self.sp.logfile = test_output
                 print('running test "{}"'.format(name))
                 if should_update_env:
@@ -129,13 +128,14 @@ class BSTestRunner(object):
                 self.sp.logfile = None
                 test_case.elapsed_sec = t_stop - t_start
                 debug_print('test output was:')
-                debug_print(test_output.getvalue())
+                debug_print(test_output.getvalue().decode('ascii', errors='ignore'))
                 if result == BSTestRunner.SUCCESS:
-                    test_case.stdout = filter(lambda c: ord(c) < 128, test_output.getvalue())
+                    # ignore non-ascii chars, replaces python2 code: filter(lambda c: ord(c) < 128, test_output.getvalue())
+                    test_case.stdout =  test_output.getvalue().decode('ascii', errors='ignore') 
                     print('test "{}" passed'.format(name))
                 else:
                     print('test "{}" failed'.format(name))
-                    test_case.add_failure_info('Test failed', output=test_output.getvalue())
+                    test_case.add_failure_info('Test failed', output=test_output.getvalue().decode('ascii', errors='ignore'))
                     should_update_env = True
                 test_output.close()
             test_cases += [test_case];
@@ -163,11 +163,11 @@ class BSTestRunner(object):
             if res == 0:
                 continue
             elif res == 1:
-                test_result = self.sp.match.group(2)
+                test_result = self.sp.match.group(2).decode('utf-8')
                 if test_result == '1':
                     return BSTestRunner.SUCCESS
                 else:
-                    if self.sp.match.group(1) != '0':
+                    if self.sp.match.group(1).decode('utf-8') != '0':
                         time.sleep(1.0)
                         self.sp.expect([TIMEOUT,
                                         'wdt reset',
@@ -228,7 +228,7 @@ class BSTestRunner(object):
             timeout -= 0.1
         if res != 0:
             return None
-        return self.sp.match.group(1)
+        return self.sp.match.group(1).decode('utf-8')
 
 
 ser = None

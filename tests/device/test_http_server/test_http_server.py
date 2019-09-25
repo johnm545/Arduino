@@ -1,20 +1,20 @@
 from collections import OrderedDict
 from mock_decorators import setup, teardown
 from threading import Thread
-from poster.encode import MultipartParam
-from poster.encode import multipart_encode
-from poster.streaminghttp import register_openers
-import urllib2
-import urllib
+from poster3.encode import MultipartParam
+from poster3.encode import multipart_encode
+from poster3.streaminghttp import register_openers
+import urllib.request, urllib.error, urllib.parse
+import urllib.request, urllib.parse, urllib.error
 
 def http_test(res, url, get=None, post=None):
     response = ''
     try:
         if get:
-            url += '?' + urllib.urlencode(get)
+            url += '?' + urllib.parse.urlencode(get)
         if post:
-            post = urllib.urlencode(post)
-        request = urllib2.urlopen(url, post, 2)
+            post = urllib.parse.urlencode(post)
+        request = urllib.request.urlopen(url, post, 2)
         response = request.read()
     except:
         return 1
@@ -60,8 +60,8 @@ def setup_http_upload(e):
             register_openers()
             p = MultipartParam("file", "0123456789abcdef", "test.txt", "text/plain; charset=utf8")
             datagen, headers = multipart_encode( [("var4", "val with spaces"), p] )
-            request = urllib2.Request('http://etd.local/upload', datagen, headers)
-            response = urllib2.urlopen(request, None, 2).read()
+            request = urllib.request.Request('http://etd.local/upload', datagen, headers)
+            response = urllib.request.urlopen(request, None, 2).read()
         except:
             return 1
         if response != 'test.txt:16\nvar4 = val with spaces':

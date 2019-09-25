@@ -5,4 +5,4 @@ pexpect
 pyserial
 xunitmerge
 junit2html
-poster
+poster3

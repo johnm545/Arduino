@@ -8,7 +8,7 @@ PYTHON ?= python3
 ESPTOOL ?= $(PYTHON) $(ESP8266_CORE_PATH)/tools/esptool/esptool.py
 MKSPIFFS ?= $(ESP8266_CORE_PATH)/tools/mkspiffs/mkspiffs
 UPLOAD_PORT ?= $(shell ls /dev/tty* | grep -m 1 -i USB)
-UPLOAD_BAUD ?= 460800
+UPLOAD_BAUD ?= 115200
 UPLOAD_BOARD ?= nodemcu
 BS_DIR ?= libraries/BSTest
 DEBUG_LEVEL ?= DebugLevel=None____
@@ -104,7 +104,7 @@ ifneq ("$(NO_RUN)","1")
 endif
 
 $(TEST_REPORT_XML): $(HARDWARE_DIR) virtualenv
-	$(SILENT)$(BS_DIR)/virtualenv/bin/xunitmerge $(shell find $(BUILD_DIR) -name 'test_result.xml' | xargs echo) $(TEST_REPORT_XML)
+	$(SILENT)$(BS_DIR)/virtualenv/bin/xunitmerge $(shell find $(BUILD_DIR) -name 'test_result.xml') $(TEST_REPORT_XML)
 
 $(TEST_REPORT_HTML): $(TEST_REPORT_XML) | virtualenv
 	$(SILENT)$(BS_DIR)/virtualenv/bin/junit2html $< $@
