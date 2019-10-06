@@ -15,7 +15,7 @@ def http_test(res, url, get=None, post=None):
         if post:
             post = urllib.parse.urlencode(post)
         request = urllib.request.urlopen(url, post, 2)
-        response = request.read()
+        response = request.read().decode('utf-8')
     except:
         return 1
     if response != res:
@@ -61,7 +61,7 @@ def setup_http_upload(e):
             p = MultipartParam("file", "0123456789abcdef", "test.txt", "text/plain; charset=utf8")
             datagen, headers = multipart_encode( [("var4", "val with spaces"), p] )
             request = urllib.request.Request('http://etd.local/upload', datagen, headers)
-            response = urllib.request.urlopen(request, None, 2).read()
+            response = urllib.request.urlopen(request, None, 2).read().decode('utf-8')
         except:
             return 1
         if response != 'test.txt:16\nvar4 = val with spaces':
